@@ -9,10 +9,10 @@
 | 平台 | 产物 | 文件名 |
 |---|---|---|
 | Windows x64 | `.exe` | `HarmonyUDID-windows.exe` |
-| macOS Intel | `.app`（zip 打包） | `HarmonyUDID-macos-intel.zip` |
-| macOS Apple Silicon (M1/M2/M3/M4) | `.app`（zip 打包） | `HarmonyUDID-macos-arm64.zip` |
+| macOS Universal (Intel + Apple Silicon) | `.app`（zip 打包） | `HarmonyUDID-macos-universal.zip` |
 
-> 三个平台并行构建，GitHub Actions matrix。每次 push 自动同时打三个包。
+> 两个 job 并行构建。macOS 用 Universal2 binary — 一个 `.app` 同时兼容 Intel + Apple Silicon Mac。
+> 不依赖 `macos-13` runner（GitHub 的 Intel runner 排队严重），全程在 `macos-latest` 上完成。
 
 ## 下载
 
@@ -33,11 +33,8 @@ git push --tags
 # Windows 版
 gh run download --repo MySwallow/udid-picker --name HarmonyUDID-windows --dir ~/Downloads/
 
-# Apple Silicon Mac 版
-gh run download --repo MySwallow/udid-picker --name HarmonyUDID-macos-arm64 --dir ~/Downloads/
-
-# Intel Mac 版
-gh run download --repo MySwallow/udid-picker --name HarmonyUDID-macos-intel --dir ~/Downloads/
+# macOS Universal 版（兼容 Intel + Apple Silicon）
+gh run download --repo MySwallow/udid-picker --name HarmonyUDID-macos-universal --dir ~/Downloads/
 ```
 
 ## 测试方使用步骤
@@ -50,13 +47,11 @@ gh run download --repo MySwallow/udid-picker --name HarmonyUDID-macos-intel --di
 5. 粘贴回传给开发者
 
 ### macOS
-1. 下载对应芯片的 `HarmonyUDID-macos-*.zip`
+1. 下载 `HarmonyUDID-macos-universal.zip`（一份通用包，自动适配 Intel + Apple Silicon）
 2. 双击解压得到 `HarmonyUDID.app`
 3. 第一次右键 → 打开（绕过 Gatekeeper 警告）
-   - 如果还报错：终端执行 `xattr -d com.apple.quarantine /path/to/HarmonyUDID.app`
+   - 如果报"应用已损坏"：终端执行 `xattr -dr com.apple.quarantine /path/to/HarmonyUDID.app`
 4. 后续步骤同 Windows
-
-> 不知道自己是 Intel 还是 Apple Silicon？**苹果菜单 → 关于本机** 看"芯片"字段，含 "Intel" 选 intel 包，含 "Apple M" 选 arm64 包。
 
 ## 工程结构
 

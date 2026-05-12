@@ -9,7 +9,6 @@ on:
       - '.github/workflows/build.yml'
     tags: ['v*']
 
-# 同一分支新提交自动取消正在跑的旧 run，避免堆积
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -24,104 +23,141 @@ jobs:
             label: windows
             hdc_name: hdc.exe
             sep: ';'
-            find_pattern: hdc.exe
-          - os: macos-13          # 最后一个 Intel runner
-            label: macos-intel
+          - os: macos-latest        # Apple Silicon runner, output Universal2 .app
+            label: macos-universal
             hdc_name: hdc
             sep: ':'
-            find_pattern: hdc
-          - os: macos-latest      # Apple Silicon (M1/M2/M3/M4)
-            label: macos-arm64
-            hdc_name: hdc
-            sep: ':'
-            find_pattern: hdc
 
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup OpenHarmony SDK
+      # --------- Windows: standard setup-ohos-sdk ---------
+      - name: Setup OpenHarmony SDK (Windows)
+        if: runner.os == 'Windows'
         uses: openharmony-rs/setup-ohos-sdk@v1
         with:
           version: '5.0.0'
           components: 'all'
 
-      - name: Locate hdc binary
+      - name: Locate hdc.exe (Windows)
+        if: runner.os == 'Windows'
         shell: bash
         run: |
           set -euxo pipefail
-          # 在 setup-ohos-sdk 的安装目录下找 hdc
-          SEARCH_ROOTS=(
-            "${OHOS_BASE_SDK_HOME:-}"
-            "${HOME}/setup-ohos-sdk"
-            "${RUNNER_TEMP}"
-            "${GITHUB_WORKSPACE}"
-          )
-          HDC=""
-          for ROOT in "${SEARCH_ROOTS[@]}"; do
-            if [ -n "$ROOT" ] && [ -d "$ROOT" ]; then
-              FOUND=$(find "$ROOT" -name "${{ matrix.find_pattern }}" -type f 2>/dev/null | head -1 || true)
-              if [ -n "$FOUND" ]; then
-                HDC="$FOUND"
-                break
-              fi
-            fi
-          done
+          HDC=$(find "${HOME}/setup-ohos-sdk" "${OHOS_BASE_SDK_HOME:-/nonexistent}" -name "hdc.exe" -type f 2>/dev/null | head -1)
+          [ -z "$HDC" ] && { echo "::error::hdc.exe not found"; exit 1; }
+          cp "$HDC" "${GITHUB_WORKSPACE}/hdc.exe"
+          ls -lh "${GITHUB_WORKSPACE}/hdc.exe"
 
-          if [ -z "$HDC" ]; then
-            echo "::error::hdc binary not found"
-            for ROOT in "${SEARCH_ROOTS[@]}"; do
-              [ -d "$ROOT" ] && echo "--- $ROOT ---" && find "$ROOT" -name "hdc*" 2>/dev/null || true
-            done
-            exit 1
+      # --------- macOS: download both arch's SDK, lipo-merge into universal hdc ---------
+      - name: Cache macOS OpenHarmony SDKs (both arch)
+        if: runner.os == 'macOS'
+        uses: actions/cache@v4
+        with:
+          path: ~/ohos-mac-sdks
+          key: ohos-mac-sdks-v5.0.0-universal-v2
+
+      - name: Download macOS SDKs (ARM + Intel) and lipo-merge hdc
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          CACHE="$HOME/ohos-mac-sdks"
+          mkdir -p "$CACHE/arm64" "$CACHE/x86_64"
+
+          # ARM Mac SDK
+          if [ ! -f "$CACHE/arm64/hdc" ]; then
+            echo "Downloading ARM Mac SDK…"
+            gh release download v5.0.0 --pattern 'L2-SDK-MAC-M1-PUBLIC.tar.gz' \
+              --repo openharmony-rs/ohos-sdk --dir "$CACHE/arm64"
+            tar -xzf "$CACHE/arm64/L2-SDK-MAC-M1-PUBLIC.tar.gz" -C "$CACHE/arm64"
+            rm "$CACHE/arm64/L2-SDK-MAC-M1-PUBLIC.tar.gz"
+            ARM_HDC=$(find "$CACHE/arm64" -name "hdc" -type f -perm +111 2>/dev/null | head -1)
+            cp "$ARM_HDC" "$CACHE/arm64/hdc"
+            # 清理大文件，只留 hdc 本身（cache 体积爆炸的话）
+            find "$CACHE/arm64" -mindepth 1 -maxdepth 2 -not -name "hdc" -exec rm -rf {} + 2>/dev/null || true
           fi
 
-          echo "Found: $HDC"
-          cp "$HDC" "${GITHUB_WORKSPACE}/${{ matrix.hdc_name }}"
-          chmod +x "${GITHUB_WORKSPACE}/${{ matrix.hdc_name }}" || true
-          ls -lh "${GITHUB_WORKSPACE}/${{ matrix.hdc_name }}"
+          # Intel Mac SDK
+          if [ ! -f "$CACHE/x86_64/hdc" ]; then
+            echo "Downloading Intel Mac SDK…"
+            gh release download v5.0.0 --pattern 'ohos-sdk-mac-public.tar.gz' \
+              --repo openharmony-rs/ohos-sdk --dir "$CACHE/x86_64"
+            tar -xzf "$CACHE/x86_64/ohos-sdk-mac-public.tar.gz" -C "$CACHE/x86_64"
+            rm "$CACHE/x86_64/ohos-sdk-mac-public.tar.gz"
+            X86_HDC=$(find "$CACHE/x86_64" -name "hdc" -type f -perm +111 2>/dev/null | head -1)
+            cp "$X86_HDC" "$CACHE/x86_64/hdc"
+            find "$CACHE/x86_64" -mindepth 1 -maxdepth 2 -not -name "hdc" -exec rm -rf {} + 2>/dev/null || true
+          fi
+
+          file "$CACHE/arm64/hdc"
+          file "$CACHE/x86_64/hdc"
+
+          # lipo 合并成 universal2 hdc
+          lipo -create -output "${GITHUB_WORKSPACE}/hdc" \
+            "$CACHE/arm64/hdc" "$CACHE/x86_64/hdc"
+          chmod +x "${GITHUB_WORKSPACE}/hdc"
+
+          echo "=== merged hdc ==="
+          file "${GITHUB_WORKSPACE}/hdc"
+          lipo -info "${GITHUB_WORKSPACE}/hdc"
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Verify tkinter available (macOS may miss it)
+      - name: Verify Python is universal2 (macOS)
         if: runner.os == 'macOS'
         shell: bash
-        run: python -c "import tkinter; print('tkinter OK:', tkinter.TkVersion)"
+        run: |
+          PY="$(which python3)"
+          file "$PY"
+          # actions/setup-python 在 macOS 上从 3.11 起装 universal2 build
+          lipo -info "$PY" || true
 
       - name: Install PyInstaller
         run: pip install pyinstaller
 
-      - name: Build with PyInstaller
-        shell: bash
-        run: |
-          set -euxo pipefail
-          pyinstaller --onefile --windowed \
-            --add-binary "${{ matrix.hdc_name }}${{ matrix.sep }}." \
-            --name "HarmonyUDID" \
-            main.py
-          ls -la dist/
-
-      - name: Package Windows .exe
+      - name: Build (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          mv dist/HarmonyUDID.exe "dist/HarmonyUDID-${{ matrix.label }}.exe"
-          ls -lh dist/
+          pyinstaller --onefile --windowed \
+            --add-binary "hdc.exe;." \
+            --name "HarmonyUDID" main.py
+          ls -la dist/
 
-      - name: Codesign and zip macOS .app
+      - name: Build Universal2 (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euxo pipefail
-          # ad-hoc 自签，避免双击时 Gatekeeper 直接弹"无法打开"
+          pyinstaller --onefile --windowed \
+            --target-arch universal2 \
+            --add-binary "hdc:." \
+            --name "HarmonyUDID" main.py
+          ls -la dist/
+          echo "=== built binary arch ==="
+          BIN="dist/HarmonyUDID.app/Contents/MacOS/HarmonyUDID"
+          file "$BIN"
+          lipo -info "$BIN"
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: mv dist/HarmonyUDID.exe "dist/HarmonyUDID-${{ matrix.label }}.exe"
+
+      - name: Codesign + zip (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
           codesign --force --deep --sign - dist/HarmonyUDID.app
-          # ditto 保留 macOS bundle 的元数据 / 执行权限，比 zip 安全
           cd dist
           ditto -c -k --sequesterRsrc --keepParent HarmonyUDID.app "HarmonyUDID-${{ matrix.label }}.zip"
-          ls -lh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
