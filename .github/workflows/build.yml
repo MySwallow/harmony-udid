@@ -69,17 +69,58 @@ jobs:
           CACHE="$HOME/ohos-mac-sdks"
           mkdir -p "$CACHE/arm64" "$CACHE/x86_64"
 
+          # 通用函数：解压 tar.gz、再解压内部所有 zip、找出真正的 hdc（Mach-O 可执行）
+          extract_hdc() {
+            local ARCHIVE="$1"
+            local WORK="$2"
+            local OUT="$3"
+
+            echo "::group::Extracting $ARCHIVE"
+            tar -xzf "$ARCHIVE" -C "$WORK"
+            rm "$ARCHIVE"
+
+            # OpenHarmony mac SDK 是双层：tar.gz → 顶层目录 → 内部多个 *-Release.zip
+            local INNER_ZIPS
+            INNER_ZIPS=$(find "$WORK" -name "*.zip" 2>/dev/null)
+            for Z in $INNER_ZIPS; do
+              # 优先解压 toolchains zip（含 hdc）
+              if [[ "$Z" == *toolchains* ]]; then
+                echo "Unzipping $Z"
+                unzip -q -o "$Z" -d "$WORK/_extracted"
+              fi
+            done
+            echo "::endgroup::"
+
+            # 找出所有 hdc 候选，挑第一个 Mach-O 可执行的
+            local FOUND=""
+            for CAND in $(find "$WORK" -name "hdc" -type f 2>/dev/null); do
+              if file "$CAND" | grep -q "Mach-O.*executable"; then
+                FOUND="$CAND"
+                break
+              fi
+            done
+            if [ -z "$FOUND" ]; then
+              echo "::error::Mach-O hdc not found in $WORK"
+              echo "--- listing for debug ---"
+              find "$WORK" -name "hdc*" -type f 2>/dev/null | head -20
+              find "$WORK" -maxdepth 4 -type d | head -30
+              return 1
+            fi
+            echo "Found hdc: $FOUND"
+            file "$FOUND"
+            cp "$FOUND" "$OUT"
+            chmod +x "$OUT"
+
+            # 清理大文件，cache 只保留单 hdc binary（~5MB）
+            find "$WORK" -mindepth 1 -not -name "hdc" -exec rm -rf {} + 2>/dev/null || true
+          }
+
           # ARM Mac SDK
           if [ ! -f "$CACHE/arm64/hdc" ]; then
             echo "Downloading ARM Mac SDK…"
             gh release download v5.0.0 --pattern 'L2-SDK-MAC-M1-PUBLIC.tar.gz' \
               --repo openharmony-rs/ohos-sdk --dir "$CACHE/arm64"
-            tar -xzf "$CACHE/arm64/L2-SDK-MAC-M1-PUBLIC.tar.gz" -C "$CACHE/arm64"
-            rm "$CACHE/arm64/L2-SDK-MAC-M1-PUBLIC.tar.gz"
-            ARM_HDC=$(find "$CACHE/arm64" -name "hdc" -type f 2>/dev/null | head -1)
-            cp "$ARM_HDC" "$CACHE/arm64/hdc"
-            # 清理大文件，只留 hdc 本身（cache 体积爆炸的话）
-            find "$CACHE/arm64" -mindepth 1 -maxdepth 2 -not -name "hdc" -exec rm -rf {} + 2>/dev/null || true
+            extract_hdc "$CACHE/arm64/L2-SDK-MAC-M1-PUBLIC.tar.gz" "$CACHE/arm64" "$CACHE/arm64/hdc"
           fi
 
           # Intel Mac SDK
@@ -87,11 +128,7 @@ jobs:
             echo "Downloading Intel Mac SDK…"
             gh release download v5.0.0 --pattern 'ohos-sdk-mac-public.tar.gz' \
               --repo openharmony-rs/ohos-sdk --dir "$CACHE/x86_64"
-            tar -xzf "$CACHE/x86_64/ohos-sdk-mac-public.tar.gz" -C "$CACHE/x86_64"
-            rm "$CACHE/x86_64/ohos-sdk-mac-public.tar.gz"
-            X86_HDC=$(find "$CACHE/x86_64" -name "hdc" -type f 2>/dev/null | head -1)
-            cp "$X86_HDC" "$CACHE/x86_64/hdc"
-            find "$CACHE/x86_64" -mindepth 1 -maxdepth 2 -not -name "hdc" -exec rm -rf {} + 2>/dev/null || true
+            extract_hdc "$CACHE/x86_64/ohos-sdk-mac-public.tar.gz" "$CACHE/x86_64" "$CACHE/x86_64/hdc"
           fi
 
           file "$CACHE/arm64/hdc"
