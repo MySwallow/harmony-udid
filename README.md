@@ -1,87 +1,103 @@
-# 鸿蒙 UDID 获取工具
+# 鸿蒙 UDID 获取工具 · HarmonyOS UDID Picker
 
-给**非开发人员**用的小工具：双击运行 → 手机 USB 接上 → 点按钮 → 设备 UDID 自动复制到剪贴板，直接粘贴回传给开发者。
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Build](https://github.com/MySwallow/udid-picker/actions/workflows/build.yml/badge.svg)](https://github.com/MySwallow/udid-picker/actions)
+[![Latest Release](https://img.shields.io/github/v/release/MySwallow/udid-picker)](https://github.com/MySwallow/udid-picker/releases/latest)
 
-> 解决场景：HarmonyOS NEXT 设备 UDID 必须通过 hdc 命令行获取，普通测试人员上手成本高。这个工具把 `hdc shell bm get --udid` 包了一层 GUI，配合内置 hdc 二进制实现真正"双击即用"。
+给**非开发人员**用的小工具：双击运行 → 手机用 USB 接上 → 点按钮 → 设备 UDID 自动复制到剪贴板。
 
-## 支持平台
+## 解决了什么问题
 
-| 平台 | 产物 | 文件名 |
-|---|---|---|
-| Windows x64 | `.exe` | `HarmonyUDID-windows.exe` |
-| macOS Universal (Intel + Apple Silicon) | `.app`（zip 打包） | `HarmonyUDID-macos-universal.zip` |
+HarmonyOS NEXT 上获取设备 UDID（用于内部测试 Profile 注册），**官方唯一途径**是命令行 `hdc shell bm get --udid`。这对测试 / 验收人员门槛太高——他们不一定有 DevEco Studio、不一定会用命令行。
 
-> 两个 job 并行构建。macOS 用 Universal2 binary — 一个 `.app` 同时兼容 Intel + Apple Silicon Mac。
-> 不依赖 `macos-13` runner（GitHub 的 Intel runner 排队严重），全程在 `macos-latest` 上完成。
+本工具把 `hdc` 包了一层 GUI，配合自动嵌入的 `hdc` + `libusb_shared` 实现真正的"双击即用"，全程 < 30 秒。
+
+> 注意：HarmonyOS NEXT 的 `deviceInfo.udid` API 受系统级权限 `ohos.permission.sec.ACCESS_UDID` 保护，三方应用**无法直接读取**——所以"装个 APP 显示 UDID"这条路走不通。本工具的本质仍然是调用 hdc，只是把流程做傻瓜化。
 
 ## 下载
 
-### 方式 A：仓库 Actions 页面（仅协作者可见）
-仓库主页 → **Actions** → 最新一次 `Build Multi-Platform` → 底部 `Artifacts` 区下载对应平台 zip。
+到 [Releases 页面](https://github.com/MySwallow/udid-picker/releases/latest) 选对应平台：
 
-### 方式 B：GitHub Release（推荐发给测试方）
-```bash
-# 在 Mac 上
-cd ~/Documents/dev/udid-picker
-git tag v1.0.0 -m "首版"
-git push --tags
-```
-完成后到 https://github.com/MySwallow/udid-picker/releases/latest 下载，**测试方不需要 GitHub 账号**。
+| 平台 | 文件 |
+|---|---|
+| Windows x64 | `HarmonyUDID-windows.exe` |
+| macOS (Intel + Apple Silicon, Universal) | `HarmonyUDID-macos-universal.zip` |
 
-### 方式 C：CLI 一键下载
-```bash
-# Windows 版
-gh run download --repo MySwallow/udid-picker --name HarmonyUDID-windows --dir ~/Downloads/
+macOS 一份通用 .app，**自动适配 Intel 和 Apple Silicon Mac**，不用区分。
 
-# macOS Universal 版（兼容 Intel + Apple Silicon）
-gh run download --repo MySwallow/udid-picker --name HarmonyUDID-macos-universal --dir ~/Downloads/
-```
-
-## 测试方使用步骤
+## 使用步骤
 
 ### Windows
-1. 下载 `HarmonyUDID-windows.exe`，双击打开
-2. SmartScreen 拦截时：**更多信息 → 仍要运行**
-3. 手机 USB 连电脑 + 开启 USB 调试
-4. 工具里点「获取 UDID」→ 自动复制到剪贴板
-5. 粘贴回传给开发者
+1. 双击 `HarmonyUDID-windows.exe`
+2. SmartScreen 警告：**更多信息 → 仍要运行**
+3. 手机 USB 接电脑
+4. 手机开「开发者模式 + USB 调试」：
+   - 设置 → 关于本机 → 连点 HarmonyOS 版本 5–7 次
+   - 设置 → 系统 → 开发人员选项 → 「USB 调试」打开
+5. 手机弹窗「允许 USB 调试？」点 **允许**
+6. 工具里点「**获取 UDID**」→ UDID 自动复制到剪贴板
+7. 粘贴回传给开发者
 
 ### macOS
-1. 下载 `HarmonyUDID-macos-universal.zip`（一份通用包，自动适配 Intel + Apple Silicon）
-2. 双击解压得到 `HarmonyUDID.app`
-3. 第一次右键 → 打开（绕过 Gatekeeper 警告）
-   - 如果报"应用已损坏"：终端执行 `xattr -dr com.apple.quarantine /path/to/HarmonyUDID.app`
-4. 后续步骤同 Windows
+1. 下载 `HarmonyUDID-macos-universal.zip`，双击解压
+2. 第一次右键 `HarmonyUDID.app` → 打开（绕过 Gatekeeper 警告）
+   - 报"应用已损坏"：终端执行 `xattr -dr com.apple.quarantine /path/to/HarmonyUDID.app`
+3. 其余步骤同 Windows
+
+> **注意**：如果你已经装了 DevEco Studio 并打开过，请先**完全退出** DevEco Studio，再用本工具，避免两个 hdc daemon 冲突。
 
 ## 工程结构
 
 ```
 udid-picker/
-├── main.py                       # GUI 主程序（跨平台 Python + Tkinter）
-├── .github/workflows/build.yml   # GitHub Actions matrix: Win / Intel Mac / ARM Mac
-├── .gitignore
+├── main.py                       # GUI 主程序（Python + Tkinter，跨平台）
+├── .github/workflows/build.yml   # GitHub Actions matrix: Win + macOS Universal
+├── LICENSE                       # MIT
 └── README.md
 ```
 
-`hdc` / `hdc.exe` 不放仓库——workflow 跑的时候用 `openharmony-rs/setup-ohos-sdk` 自动拉对应平台的 OpenHarmony SDK，提取出 hdc 后内嵌进打包产物。
+`hdc` / `libusb_shared` 二进制不在仓库——CI 时由 [openharmony-rs/setup-ohos-sdk](https://github.com/openharmony-rs/setup-ohos-sdk) 与 [openharmony-rs/ohos-sdk](https://github.com/openharmony-rs/ohos-sdk) 自动拉取 OpenHarmony 5.0.0 SDK，提取 hdc + libusb 后随 PyInstaller 一起打包。
 
 ## 本地调试
 
 ```bash
-# Mac 用户从 DevEco Studio 拷一个 hdc
-cp /Applications/DevEco-Studio.app/Contents/sdk/HarmonyOS-NEXT-DBn/openharmony/toolchains/hdc .
+git clone https://github.com/MySwallow/udid-picker.git
+cd udid-picker
+
+# Mac 上：从 DevEco Studio 拷一个 hdc 到当前目录
+# 路径示例：~/Library/Huawei/Sdk/<version>/openharmony/toolchains/hdc
+#         或 /Applications/DevEco-Studio.app/Contents/sdk/.../toolchains/hdc
+
 python3 main.py
 ```
 
-## 触发打包
+## 自己构建
 
-| 想做的事 | 命令 |
-|---|---|
-| 改完代码自动打 | `git push` |
-| 不改代码重打 | `gh workflow run build.yml --repo MySwallow/udid-picker` |
-| 打稳定版本发给测试方 | `git tag v1.0.0 && git push --tags` |
-| 看进度 | `gh run watch --repo MySwallow/udid-picker` |
+任何人 Fork 后都能在自己的仓库下构建：
 
-## 隐私
+```bash
+# 改完代码自动打三个平台
+git push
 
-工具只调用本地 hdc，不联网，不上传任何信息。
+# 或手动触发
+gh workflow run build.yml
+
+# 发版本到 Releases
+git tag v1.0.0 -m "..." && git push --tags
+```
+
+## 隐私 & 安全
+
+- 工具只调用本地 hdc，**不联网**，不上传任何信息
+- 源码全部在本仓库，可自行审计
+- 内嵌的 hdc / libusb_shared 来自 OpenHarmony 公开 SDK（Apache 2.0），未经过任何修改
+
+## 致谢
+
+- [OpenHarmony](https://www.openharmony.cn/) — 开源 SDK + hdc 工具
+- [openharmony-rs/ohos-sdk](https://github.com/openharmony-rs/ohos-sdk) — GitHub Release 镜像
+- [iHongRen/harmony-udid-tool](https://github.com/iHongRen/harmony-udid-tool) — 思路参考（macOS only）
+
+## License
+
+[MIT](LICENSE) © 2026 MySwallow
