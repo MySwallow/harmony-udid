@@ -76,7 +76,7 @@ jobs:
               --repo openharmony-rs/ohos-sdk --dir "$CACHE/arm64"
             tar -xzf "$CACHE/arm64/L2-SDK-MAC-M1-PUBLIC.tar.gz" -C "$CACHE/arm64"
             rm "$CACHE/arm64/L2-SDK-MAC-M1-PUBLIC.tar.gz"
-            ARM_HDC=$(find "$CACHE/arm64" -name "hdc" -type f -perm +111 2>/dev/null | head -1)
+            ARM_HDC=$(find "$CACHE/arm64" -name "hdc" -type f 2>/dev/null | head -1)
             cp "$ARM_HDC" "$CACHE/arm64/hdc"
             # 清理大文件，只留 hdc 本身（cache 体积爆炸的话）
             find "$CACHE/arm64" -mindepth 1 -maxdepth 2 -not -name "hdc" -exec rm -rf {} + 2>/dev/null || true
@@ -89,7 +89,7 @@ jobs:
               --repo openharmony-rs/ohos-sdk --dir "$CACHE/x86_64"
             tar -xzf "$CACHE/x86_64/ohos-sdk-mac-public.tar.gz" -C "$CACHE/x86_64"
             rm "$CACHE/x86_64/ohos-sdk-mac-public.tar.gz"
-            X86_HDC=$(find "$CACHE/x86_64" -name "hdc" -type f -perm +111 2>/dev/null | head -1)
+            X86_HDC=$(find "$CACHE/x86_64" -name "hdc" -type f 2>/dev/null | head -1)
             cp "$X86_HDC" "$CACHE/x86_64/hdc"
             find "$CACHE/x86_64" -mindepth 1 -maxdepth 2 -not -name "hdc" -exec rm -rf {} + 2>/dev/null || true
           fi
