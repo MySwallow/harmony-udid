@@ -41,8 +41,10 @@ macOS 一份通用 .app，**自动适配 Intel 和 Apple Silicon Mac**，不用�
 ### macOS
 1. 下载 `HarmonyUDID-macos-universal.zip`，双击解压
 2. 第一次右键 `HarmonyUDID.app` → 打开（绕过 Gatekeeper 警告）
-   - 报"应用已损坏"：终端执行 `xattr -dr com.apple.quarantine /path/to/HarmonyUDID.app`
-3. 其余步骤同 Windows
+3. 如果系统弹"已损坏，无法打开"，二选一：
+   - **图形界面（推荐给非技术用户）**：系统设置 → 隐私与安全性 → 滑到底部找到「HarmonyUDID 已被阻止」→ 点 **「仍要打开」** → 输入密码确认
+   - **命令行（一行根除）**：终端执行 `xattr -dr com.apple.quarantine /path/to/HarmonyUDID.app`
+4. 其余步骤同 Windows
 
 > **注意**：如果你已经装了 DevEco Studio 并打开过，请先**完全退出** DevEco Studio，再用本工具，避免两个 hdc daemon 冲突。
 
