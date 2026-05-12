@@ -1,4 +1,4 @@
-name: Build Windows EXE
+name: Build Multi-Platform
 
 on:
   workflow_dispatch:
@@ -7,58 +7,133 @@ on:
     paths:
       - 'main.py'
       - '.github/workflows/build.yml'
+    tags: ['v*']
+
+# 同一分支新提交自动取消正在跑的旧 run，避免堆积
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows
+            hdc_name: hdc.exe
+            sep: ';'
+            find_pattern: hdc.exe
+          - os: macos-13          # 最后一个 Intel runner
+            label: macos-intel
+            hdc_name: hdc
+            sep: ':'
+            find_pattern: hdc
+          - os: macos-latest      # Apple Silicon (M1/M2/M3/M4)
+            label: macos-arm64
+            hdc_name: hdc
+            sep: ':'
+            find_pattern: hdc
+
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup OpenHarmony SDK (for hdc.exe)
+      - name: Setup OpenHarmony SDK
         uses: openharmony-rs/setup-ohos-sdk@v1
         with:
           version: '5.0.0'
-          # setup-ohos-sdk 强制需要 native 组件存在，不然脚本最后 cd 会失败。用 'all'
           components: 'all'
 
-      - name: Locate hdc.exe
-        shell: pwsh
+      - name: Locate hdc binary
+        shell: bash
         run: |
-          $hdc = Get-ChildItem -Path "$env:OHOS_BASE_SDK_HOME","$env:GITHUB_WORKSPACE","$env:RUNNER_TEMP","$env:USERPROFILE" -Recurse -Filter "hdc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $hdc) {
-            Write-Error "hdc.exe not found"
+          set -euxo pipefail
+          # 在 setup-ohos-sdk 的安装目录下找 hdc
+          SEARCH_ROOTS=(
+            "${OHOS_BASE_SDK_HOME:-}"
+            "${HOME}/setup-ohos-sdk"
+            "${RUNNER_TEMP}"
+            "${GITHUB_WORKSPACE}"
+          )
+          HDC=""
+          for ROOT in "${SEARCH_ROOTS[@]}"; do
+            if [ -n "$ROOT" ] && [ -d "$ROOT" ]; then
+              FOUND=$(find "$ROOT" -name "${{ matrix.find_pattern }}" -type f 2>/dev/null | head -1 || true)
+              if [ -n "$FOUND" ]; then
+                HDC="$FOUND"
+                break
+              fi
+            fi
+          done
+
+          if [ -z "$HDC" ]; then
+            echo "::error::hdc binary not found"
+            for ROOT in "${SEARCH_ROOTS[@]}"; do
+              [ -d "$ROOT" ] && echo "--- $ROOT ---" && find "$ROOT" -name "hdc*" 2>/dev/null || true
+            done
             exit 1
-          }
-          Write-Host "Found hdc.exe at: $($hdc.FullName)"
-          Copy-Item -Path $hdc.FullName -Destination "$env:GITHUB_WORKSPACE\hdc.exe"
-          Get-Item "$env:GITHUB_WORKSPACE\hdc.exe" | Format-List Name, Length
+          fi
+
+          echo "Found: $HDC"
+          cp "$HDC" "${GITHUB_WORKSPACE}/${{ matrix.hdc_name }}"
+          chmod +x "${GITHUB_WORKSPACE}/${{ matrix.hdc_name }}" || true
+          ls -lh "${GITHUB_WORKSPACE}/${{ matrix.hdc_name }}"
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
+      - name: Verify tkinter available (macOS may miss it)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: python -c "import tkinter; print('tkinter OK:', tkinter.TkVersion)"
+
       - name: Install PyInstaller
         run: pip install pyinstaller
 
-      - name: Build EXE
-        shell: cmd
+      - name: Build with PyInstaller
+        shell: bash
         run: |
-          pyinstaller --onefile --windowed ^
-            --add-binary "hdc.exe;." ^
-            --name "HarmonyUDID" ^
+          set -euxo pipefail
+          pyinstaller --onefile --windowed \
+            --add-binary "${{ matrix.hdc_name }}${{ matrix.sep }}." \
+            --name "HarmonyUDID" \
             main.py
+          ls -la dist/
+
+      - name: Package Windows .exe
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mv dist/HarmonyUDID.exe "dist/HarmonyUDID-${{ matrix.label }}.exe"
+          ls -lh dist/
+
+      - name: Codesign and zip macOS .app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # ad-hoc 自签，避免双击时 Gatekeeper 直接弹"无法打开"
+          codesign --force --deep --sign - dist/HarmonyUDID.app
+          # ditto 保留 macOS bundle 的元数据 / 执行权限，比 zip 安全
+          cd dist
+          ditto -c -k --sequesterRsrc --keepParent HarmonyUDID.app "HarmonyUDID-${{ matrix.label }}.zip"
+          ls -lh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HarmonyUDID-windows
-          path: dist/HarmonyUDID.exe
+          name: HarmonyUDID-${{ matrix.label }}
+          path: dist/HarmonyUDID-${{ matrix.label }}.*
           retention-days: 30
 
-      - name: Create Release on tag
+      - name: Add to Release (on tag)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/HarmonyUDID.exe
+          files: dist/HarmonyUDID-${{ matrix.label }}.*
           generate_release_notes: true
+          fail_on_unmatched_files: false
