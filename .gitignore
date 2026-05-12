@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.spec
+
+# PyInstaller
+build/
+dist/
+
+# 平台二进制（workflow 会自动下载，本地仅做调试用）
+hdc
+hdc.exe
+
+# macOS
+.DS_Store

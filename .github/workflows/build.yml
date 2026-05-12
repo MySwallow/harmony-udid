@@ -1,0 +1,63 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'main.py'
+      - '.github/workflows/build.yml'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup OpenHarmony SDK (for hdc.exe)
+        uses: openharmony-rs/setup-ohos-sdk@v1
+        with:
+          version: '5.0.0'
+          components: 'toolchains'
+
+      - name: Locate hdc.exe
+        shell: pwsh
+        run: |
+          $hdc = Get-ChildItem -Path "$env:OHOS_BASE_SDK_HOME","$env:GITHUB_WORKSPACE","$env:RUNNER_TEMP","$env:USERPROFILE" -Recurse -Filter "hdc.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $hdc) {
+            Write-Error "hdc.exe not found"
+            exit 1
+          }
+          Write-Host "Found hdc.exe at: $($hdc.FullName)"
+          Copy-Item -Path $hdc.FullName -Destination "$env:GITHUB_WORKSPACE\hdc.exe"
+          Get-Item "$env:GITHUB_WORKSPACE\hdc.exe" | Format-List Name, Length
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build EXE
+        shell: cmd
+        run: |
+          pyinstaller --onefile --windowed ^
+            --add-binary "hdc.exe;." ^
+            --name "HarmonyUDID" ^
+            main.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HarmonyUDID-windows
+          path: dist/HarmonyUDID.exe
+          retention-days: 30
+
+      - name: Create Release on tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/HarmonyUDID.exe
+          generate_release_notes: true
