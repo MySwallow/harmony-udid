@@ -21,19 +21,15 @@ jobs:
         include:
           - os: windows-latest
             label: windows
-            hdc_name: hdc.exe
-            sep: ';'
-          - os: macos-latest        # Apple Silicon runner, output Universal2 .app
+          - os: macos-latest        # Apple Silicon, output Universal2 .app
             label: macos-universal
-            hdc_name: hdc
-            sep: ':'
 
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
 
-      # --------- Windows: standard setup-ohos-sdk ---------
+      # --------- Windows: pick hdc.exe + libusb_shared.dll ---------
       - name: Setup OpenHarmony SDK (Windows)
         if: runner.os == 'Windows'
         uses: openharmony-rs/setup-ohos-sdk@v1
@@ -41,25 +37,36 @@ jobs:
           version: '5.0.0'
           components: 'all'
 
-      - name: Locate hdc.exe (Windows)
+      - name: Locate hdc.exe + libusb_shared.dll (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           set -euxo pipefail
           HDC=$(find "${HOME}/setup-ohos-sdk" "${OHOS_BASE_SDK_HOME:-/nonexistent}" -name "hdc.exe" -type f 2>/dev/null | head -1)
           [ -z "$HDC" ] && { echo "::error::hdc.exe not found"; exit 1; }
+          HDC_DIR=$(dirname "$HDC")
           cp "$HDC" "${GITHUB_WORKSPACE}/hdc.exe"
-          ls -lh "${GITHUB_WORKSPACE}/hdc.exe"
 
-      # --------- macOS: download both arch's SDK, lipo-merge into universal hdc ---------
-      - name: Cache macOS OpenHarmony SDKs (both arch)
+          # hdc.exe 依赖 libusb_shared.dll (在 toolchains 同目录)
+          LIBUSB=$(find "$HDC_DIR" -maxdepth 2 -name "libusb_shared.dll" -type f 2>/dev/null | head -1)
+          if [ -z "$LIBUSB" ]; then
+            echo "::error::libusb_shared.dll not found next to hdc.exe"
+            find "${HOME}/setup-ohos-sdk" -name "libusb_shared*" 2>/dev/null | head -10
+            exit 1
+          fi
+          cp "$LIBUSB" "${GITHUB_WORKSPACE}/libusb_shared.dll"
+          ls -lh "${GITHUB_WORKSPACE}/hdc.exe" "${GITHUB_WORKSPACE}/libusb_shared.dll"
+
+      # --------- macOS: pull both arch's hdc+libusb, lipo into universal binaries ---------
+      - name: Cache macOS OpenHarmony SDK binaries
         if: runner.os == 'macOS'
         uses: actions/cache@v4
         with:
           path: ~/ohos-mac-sdks
-          key: ohos-mac-sdks-v5.0.0-universal-v2
+          # v3: 现在 cache 同时包含 hdc 和 libusb_shared.dylib
+          key: ohos-mac-sdks-v5.0.0-universal-v3
 
-      - name: Download macOS SDKs (ARM + Intel) and lipo-merge hdc
+      - name: Download macOS SDKs and lipo-merge hdc + libusb (macOS)
         if: runner.os == 'macOS'
         shell: bash
         env:
@@ -69,21 +76,16 @@ jobs:
           CACHE="$HOME/ohos-mac-sdks"
           mkdir -p "$CACHE/arm64" "$CACHE/x86_64"
 
-          # 通用函数：解压 tar.gz、再解压内部所有 zip、找出真正的 hdc（Mach-O 可执行）
-          extract_hdc() {
-            local ARCHIVE="$1"
-            local WORK="$2"
-            local OUT="$3"
+          # 提取一对二进制：hdc + libusb_shared.dylib
+          extract_pair() {
+            local ARCHIVE="$1" WORK="$2" OUT_HDC="$3" OUT_LIBUSB="$4"
 
-            echo "::group::Extracting $ARCHIVE"
+            echo "::group::Extract $ARCHIVE"
             tar -xzf "$ARCHIVE" -C "$WORK"
             rm "$ARCHIVE"
 
-            # OpenHarmony mac SDK 是双层：tar.gz → 顶层目录 → 内部多个 *-Release.zip
-            local INNER_ZIPS
-            INNER_ZIPS=$(find "$WORK" -name "*.zip" 2>/dev/null)
-            for Z in $INNER_ZIPS; do
-              # 优先解压 toolchains zip（含 hdc）
+            # 双层结构：tar.gz → *-Release.zip 内层
+            for Z in $(find "$WORK" -name "*.zip" 2>/dev/null); do
               if [[ "$Z" == *toolchains* ]]; then
                 echo "Unzipping $Z"
                 unzip -q -o "$Z" -d "$WORK/_extracted"
@@ -91,57 +93,70 @@ jobs:
             done
             echo "::endgroup::"
 
-            # 找出所有 hdc 候选，挑第一个 Mach-O 可执行的
-            local FOUND=""
+            # 找 Mach-O hdc
+            local HDC=""
             for CAND in $(find "$WORK" -name "hdc" -type f 2>/dev/null); do
               if file "$CAND" | grep -q "Mach-O.*executable"; then
-                FOUND="$CAND"
-                break
+                HDC="$CAND"; break
               fi
             done
-            if [ -z "$FOUND" ]; then
-              echo "::error::Mach-O hdc not found in $WORK"
-              echo "--- listing for debug ---"
-              find "$WORK" -name "hdc*" -type f 2>/dev/null | head -20
-              find "$WORK" -maxdepth 4 -type d | head -30
+            if [ -z "$HDC" ]; then
+              echo "::error::Mach-O hdc not found"
+              find "$WORK" -name "hdc*" -type f | head -20
               return 1
             fi
-            echo "Found hdc: $FOUND"
-            file "$FOUND"
-            cp "$FOUND" "$OUT"
-            chmod +x "$OUT"
+            cp "$HDC" "$OUT_HDC"
+            chmod +x "$OUT_HDC"
 
-            # 清理大文件，cache 只保留单 hdc binary（~5MB）
-            find "$WORK" -mindepth 1 -not -name "hdc" -exec rm -rf {} + 2>/dev/null || true
+            # 找 libusb_shared.dylib（hdc 依赖 @rpath/libusb_shared.dylib，@rpath=@loader_path）
+            local LIBUSB=$(find "$WORK" -name "libusb_shared.dylib" -type f 2>/dev/null | head -1)
+            if [ -z "$LIBUSB" ]; then
+              echo "::error::libusb_shared.dylib not found"
+              find "$WORK" -name "*.dylib" -type f | head -20
+              return 1
+            fi
+            cp "$LIBUSB" "$OUT_LIBUSB"
+
+            echo "Got hdc: $(file "$OUT_HDC")"
+            echo "Got libusb: $(file "$OUT_LIBUSB")"
+
+            # cache 减肥：只保留 hdc + libusb
+            find "$WORK" -mindepth 1 -not -name "hdc" -not -name "libusb_shared.dylib" \
+              -exec rm -rf {} + 2>/dev/null || true
           }
 
-          # ARM Mac SDK
-          if [ ! -f "$CACHE/arm64/hdc" ]; then
-            echo "Downloading ARM Mac SDK…"
+          if [ ! -f "$CACHE/arm64/hdc" ] || [ ! -f "$CACHE/arm64/libusb_shared.dylib" ]; then
+            echo "::group::Download ARM Mac SDK"
             gh release download v5.0.0 --pattern 'L2-SDK-MAC-M1-PUBLIC.tar.gz' \
               --repo openharmony-rs/ohos-sdk --dir "$CACHE/arm64"
-            extract_hdc "$CACHE/arm64/L2-SDK-MAC-M1-PUBLIC.tar.gz" "$CACHE/arm64" "$CACHE/arm64/hdc"
+            echo "::endgroup::"
+            extract_pair "$CACHE/arm64/L2-SDK-MAC-M1-PUBLIC.tar.gz" "$CACHE/arm64" \
+              "$CACHE/arm64/hdc" "$CACHE/arm64/libusb_shared.dylib"
           fi
 
-          # Intel Mac SDK
-          if [ ! -f "$CACHE/x86_64/hdc" ]; then
-            echo "Downloading Intel Mac SDK…"
+          if [ ! -f "$CACHE/x86_64/hdc" ] || [ ! -f "$CACHE/x86_64/libusb_shared.dylib" ]; then
+            echo "::group::Download Intel Mac SDK"
             gh release download v5.0.0 --pattern 'ohos-sdk-mac-public.tar.gz' \
               --repo openharmony-rs/ohos-sdk --dir "$CACHE/x86_64"
-            extract_hdc "$CACHE/x86_64/ohos-sdk-mac-public.tar.gz" "$CACHE/x86_64" "$CACHE/x86_64/hdc"
+            echo "::endgroup::"
+            extract_pair "$CACHE/x86_64/ohos-sdk-mac-public.tar.gz" "$CACHE/x86_64" \
+              "$CACHE/x86_64/hdc" "$CACHE/x86_64/libusb_shared.dylib"
           fi
 
-          file "$CACHE/arm64/hdc"
-          file "$CACHE/x86_64/hdc"
-
-          # lipo 合并成 universal2 hdc
+          # lipo 合并成 universal2
           lipo -create -output "${GITHUB_WORKSPACE}/hdc" \
             "$CACHE/arm64/hdc" "$CACHE/x86_64/hdc"
           chmod +x "${GITHUB_WORKSPACE}/hdc"
 
+          lipo -create -output "${GITHUB_WORKSPACE}/libusb_shared.dylib" \
+            "$CACHE/arm64/libusb_shared.dylib" "$CACHE/x86_64/libusb_shared.dylib"
+
           echo "=== merged hdc ==="
           file "${GITHUB_WORKSPACE}/hdc"
           lipo -info "${GITHUB_WORKSPACE}/hdc"
+          echo "=== merged libusb_shared.dylib ==="
+          file "${GITHUB_WORKSPACE}/libusb_shared.dylib"
+          lipo -info "${GITHUB_WORKSPACE}/libusb_shared.dylib"
 
       - uses: actions/setup-python@v5
         with:
@@ -153,7 +168,6 @@ jobs:
         run: |
           PY="$(which python3)"
           file "$PY"
-          # actions/setup-python 在 macOS 上从 3.11 起装 universal2 build
           lipo -info "$PY" || true
 
       - name: Install PyInstaller
@@ -165,6 +179,7 @@ jobs:
         run: |
           pyinstaller --onefile --windowed \
             --add-binary "hdc.exe;." \
+            --add-binary "libusb_shared.dll;." \
             --name "HarmonyUDID" main.py
           ls -la dist/
 
@@ -176,9 +191,9 @@ jobs:
           pyinstaller --onefile --windowed \
             --target-arch universal2 \
             --add-binary "hdc:." \
+            --add-binary "libusb_shared.dylib:." \
             --name "HarmonyUDID" main.py
           ls -la dist/
-          echo "=== built binary arch ==="
           BIN="dist/HarmonyUDID.app/Contents/MacOS/HarmonyUDID"
           file "$BIN"
           lipo -info "$BIN"
