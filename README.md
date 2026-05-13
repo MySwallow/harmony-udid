@@ -1,8 +1,8 @@
 # 鸿蒙 UDID 获取工具 · HarmonyOS UDID Picker
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Build](https://github.com/MySwallow/udid-picker/actions/workflows/build.yml/badge.svg)](https://github.com/MySwallow/udid-picker/actions)
-[![Latest Release](https://img.shields.io/github/v/release/MySwallow/udid-picker)](https://github.com/MySwallow/udid-picker/releases/latest)
+[![Build](https://github.com/MySwallow/harmony-udid/actions/workflows/build.yml/badge.svg)](https://github.com/MySwallow/harmony-udid/actions)
+[![Latest Release](https://img.shields.io/github/v/release/MySwallow/harmony-udid)](https://github.com/MySwallow/harmony-udid/releases/latest)
 
 给**非开发人员**用的小工具：双击运行 → 手机用 USB 接上 → 点按钮 → 设备 UDID 自动复制到剪贴板。
 
@@ -16,7 +16,7 @@ HarmonyOS NEXT 上获取设备 UDID（用于内部测试 Profile 注册），**�
 
 ## 下载
 
-到 [Releases 页面](https://github.com/MySwallow/udid-picker/releases/latest) 选对应平台：
+到 [Releases 页面](https://github.com/MySwallow/harmony-udid/releases/latest) 选对应平台：
 
 | 平台 | 文件 |
 |---|---|
@@ -51,7 +51,7 @@ macOS 一份通用 .app，**自动适配 Intel 和 Apple Silicon Mac**，不用�
 ## 工程结构
 
 ```
-udid-picker/
+harmony-udid/
 ├── main.py                       # GUI 主程序（Python + Tkinter，跨平台）
 ├── .github/workflows/build.yml   # GitHub Actions matrix: Win + macOS Universal
 ├── LICENSE                       # MIT
@@ -63,8 +63,8 @@ udid-picker/
 ## 本地调试
 
 ```bash
-git clone https://github.com/MySwallow/udid-picker.git
-cd udid-picker
+git clone https://github.com/MySwallow/harmony-udid.git
+cd harmony-udid
 
 # Mac 上：从 DevEco Studio 拷一个 hdc 到当前目录
 # 路径示例：~/Library/Huawei/Sdk/<version>/openharmony/toolchains/hdc
